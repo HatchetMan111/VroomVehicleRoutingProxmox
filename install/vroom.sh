@@ -182,8 +182,13 @@ if [[ "$CT_EXISTS" -eq 0 ]]; then
   fi
 
   FEATURES="nesting=1,keyctl=1"
-  PWARG=(); [[ -n "$PASSWORD" ]] && PWARG=(--password "$PASSWORD")
-  SSHARG=(); [[ -n "$SSH_KEYS" ]] && SSHARG=(--ssh-public-keys "$SSH_KEYS")
+  # Optionale Args nur bei Bedarf anhängen. WICHTIG: leere Arrays duerfen
+  # NICHT als "${ARR[@]:-}" expandiert werden — das erzeugt je ein leeres
+  # Argument ("") und pct create bricht mit "400 too many arguments" ab.
+  # Das :+-Idiom expandiert zu null Argumenten, wenn das Array leer ist.
+  EXTRA_ARGS=()
+  [[ -n "$PASSWORD" ]] && EXTRA_ARGS+=(--password "$PASSWORD")
+  [[ -n "$SSH_KEYS" ]] && EXTRA_ARGS+=(--ssh-public-keys "$SSH_KEYS")
 
   log "Erstelle LXC $CTID ($CT_HOSTNAME): cpu=$CPU ram=${RAM}MB disk=${DISK}G ..."
   pct create "$CTID" "${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE}" \
@@ -195,7 +200,7 @@ if [[ "$CT_EXISTS" -eq 0 ]]; then
     --unprivileged "$UNPRIVILEGED" \
     --onboot "$ONBOOT" \
     --start "$START_ON_CREATE" \
-    "${PWARG[@]:-}" "${SSHARG[@]:-}" \
+    "${EXTRA_ARGS[@]:+"${EXTRA_ARGS[@]}"}" \
     || die "pct create fehlgeschlagen (siehe Ausgabe oben + pct config)."
 
   pct set "$CTID" --onboot "$ONBOOT" || warn "pct set --onboot schlug fehl."
