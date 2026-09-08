@@ -44,7 +44,10 @@ SWAP="${SWAP:-512}"                                     # MiB
 DISK="${DISK:-8}"                                       # GB (Source-Build braucht ~2 GB temporaer)
 STORAGE="${STORAGE:-local-lvm}"                         # Container-Storage
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"           # Template-Storage
-TEMPLATE="${TEMPLATE:-debian-12-standard_12.7-1_amd64.tar.zst}"
+# "auto" = neuestes debian-13-Template, sonst neuestes ubuntu-24.04.
+# Hintergrund: VROOM >= 1.15 braucht GCC >= 13 (C++20 <format>); Debian 12
+# (GCC 12) kann es NICHT bauen. Expliziter Name = exakt dieser wird verwendet.
+TEMPLATE="${TEMPLATE:-auto}"
 BRIDGE="${BRIDGE:-vmbr0}"
 IP_MODE="${IP_MODE:-dhcp}"                              # "dhcp" oder statisch "192.168.1.50/24"
 GATEWAY="${GATEWAY:-}"                                  # nur bei statischer IP noetig
@@ -141,9 +144,28 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Template sicherstellen + LXC erstellen (nur wenn neu)
 # ---------------------------------------------------------------------------
-# Stellt sicher, dass TEMPLATE lokal vorliegt. Faellt auf das neueste
-# debian-12-Standard-Template zurueck, falls der gepinnte Name veraltet ist.
+# Loest TEMPLATE="auto" auf: neuestes debian-13, sonst neuestes
+# ubuntu-24.04 (beide haben GCC>=13). Debian 12 ist absichtlich NICHT dabei.
+resolve_auto_template() {
+  local avail cand pat
+  avail="$(pveam available --section system 2>/dev/null || true)"
+  for pat in 'debian-13-standard_[^[:space:]]*amd64\.tar\.zst' \
+             'ubuntu-24\.04-standard_[^[:space:]]*amd64\.tar\.zst'; do
+    cand="$(printf '%s\n' "$avail" | grep -oE "$pat" | sort -V | tail -n 1 || true)"
+    if [[ -n "$cand" ]]; then
+      TEMPLATE="$cand"
+      log "Auto-Template: $TEMPLATE"
+      return 0
+    fi
+  done
+  die "Kein debian-13- oder ubuntu-24.04-Template verfuegbar (VROOM braucht GCC>=13). Siehe: pveam available --section system"
+}
+
+# Stellt sicher, dass TEMPLATE lokal vorliegt (mit Fallback bei altem Pin).
 ensure_template() {
+  if [[ "$TEMPLATE" == "auto" ]]; then
+    resolve_auto_template
+  fi
   if pveam list "$TEMPLATE_STORAGE" 2>/dev/null | grep -q "$TEMPLATE"; then
     log "Template $TEMPLATE bereits auf $TEMPLATE_STORAGE vorhanden."
     return 0
@@ -157,12 +179,12 @@ ensure_template() {
     ok "Template $TEMPLATE geladen."
     return 0
   fi
-  warn "Template $TEMPLATE nicht verfuegbar -> suche neuestes debian-12-Standard-Template."
+  warn "Template $TEMPLATE nicht verfuegbar -> suche neuestes debian-13-Standard-Template."
   local newest=""
   newest="$(pveam available --section system 2>/dev/null \
-    | grep -oE 'debian-12-standard_[^[:space:]]*amd64\.tar\.zst' \
+    | grep -oE 'debian-13-standard_[^[:space:]]*amd64\.tar\.zst' \
     | sort -V | tail -n 1 || true)"
-  [[ -n "$newest" ]] || die "Kein debian-12-Template gefunden. Siehe: pveam available --section system"
+  [[ -n "$newest" ]] || die "Kein debian-13-Template gefunden. Siehe: pveam available --section system"
   TEMPLATE="$newest"
   log "Nutze stattdessen: $TEMPLATE"
   pveam download "$TEMPLATE_STORAGE" "$TEMPLATE" \
@@ -172,6 +194,14 @@ ensure_template() {
 
 if [[ "$CT_EXISTS" -eq 0 ]]; then
   ensure_template
+  # Debian <= 12 hat nur GCC <= 12 und kann VROOM >= 1.15 nicht bauen.
+  # Frueh abbrechen statt 10 Minuten spaeter im Compiler-Fehler zu landen.
+  # (Escape Hatch: ALLOW_OLD_TEMPLATE=1, z. B. fuer aeltere VROOM_VERSION.)
+  if [[ "${ALLOW_OLD_TEMPLATE:-0}" != "1" ]] \
+    && [[ "$TEMPLATE" == debian-1[12]-* || "$TEMPLATE" == debian-1[01]-* \
+          || "$TEMPLATE" == ubuntu-2[02].04-* ]]; then
+    die "TEMPLATE=$TEMPLATE ist zu alt (VROOM $VROOM_VERSION braucht GCC>=13, C++20 <format>). Nutze TEMPLATE=auto (Debian 13 / Ubuntu 24.04)."
+  fi
 
   NET="name=eth0,bridge=${BRIDGE}"
   if [[ "$IP_MODE" == "dhcp" ]]; then

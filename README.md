@@ -10,7 +10,9 @@ vollständig lokal; ein Routing-Server (OSRM/ORS/Valhalla) ist nur für echte lo
 - **Web UI:** `http://<LXC-IP>:8080/` (Gateway, bind `0.0.0.0`, statische UI + Proxy)
 - **API:** `http://<LXC-IP>:3000/` (`POST` VROOM-JSON, `GET /health`)
 - **Systemd:** `vroom-api` + `vroom-web` (`enable`, `Restart=always`, `After=network-online.target`), Container `onboot: 1`
-- **Default-Ressourcen:** 2 vCPU, 2 GB RAM, 8 GB Disk, Debian 12, unprivilegiert
+- **Default-Ressourcen:** 2 vCPU, 2 GB RAM, 8 GB Disk, Debian 13 (auto, unprivilegiert)
+- **Compiler:** VROOM ≥ 1.15 braucht GCC ≥ 13 (C++20 `<format>`) – Debian 12 geht nicht;
+  das Script wählt automatisch Debian 13 (Fallback Ubuntu 24.04) und prüft den Compiler vor dem Build
 
 ## Einzeiler (Proxmox-Host, als root)
 
@@ -32,9 +34,13 @@ bash -x -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/VroomV
 ```
 
 Alle Variablen stehen oben in `install/vroom.sh` (`CTID`, `CT_HOSTNAME` (Default `VroomVehicle`),
-`CPU`, `RAM`, `DISK`, `STORAGE`, `TEMPLATE` (mit Fallback aufs neueste Debian-12-Template),
-`BRIDGE`, `IP_MODE`, `API_PORT`, `WEB_PORT`, `VROOM_VERSION`, …). Container-Name
-überschreiben mit z. B. `CT_HOSTNAME=mein-name`.
+`CPU`, `RAM`, `DISK`, `STORAGE`, `TEMPLATE` (Default `auto` = neuestes Debian 13,
+Fallback Ubuntu 24.04), `BRIDGE`, `IP_MODE`, `API_PORT`, `WEB_PORT`, `VROOM_VERSION`, …).
+Container-Name überschreiben mit z. B. `CT_HOSTNAME=mein-name`.
+
+> Hinweis: Ein bereits mit Debian 12 erstellter Container kann VROOM ≥ 1.15 nicht
+> bauen (GCC 12). Dann alten CT löschen (`pct destroy <CTID>`) und Einzeiler erneut
+> laufen lassen – es wird automatisch ein Debian-13-Container erstellt.
 
 ## Erwartete Ausgabe (Erfolg)
 

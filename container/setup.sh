@@ -72,18 +72,62 @@ fetch() { # $1=url $2=dest — mit kompletter Fehlermeldung bei Misserfolg
   fi
 }
 
+run_step() { # $1=Beschreibung $2=Logdatei, Rest=Befehl mit Args
+  # Befehl mit Log in Datei; bei Fehler: letzte 40 Zeilen + die().
+  # (Direktes "cmd | tail" wuerde im ERR-Trap nur "tail" als Befehl zeigen.)
+  local desc="$1" logf="$2"; shift 2
+  log "$desc ..."
+  if "$@" >"$logf" 2>&1; then
+    tail -n 3 "$logf" || true
+    return 0
+  else
+    local ec=$?
+    printf '%s\n' "----- letzte 40 Zeilen aus $logf (Exit $ec) -----" >&2
+    tail -n 40 "$logf" >&2 || true
+    printf '%s\n' "------------------------------------------------" >&2
+    die "$desc fehlgeschlagen (Exit $ec). Volles Log: $logf"
+  fi
+}
+
+pick_cxx() { # gibt C++20-<format>-faehigen Compiler aus (VROOM braucht GCC>=13)
+  local cand
+  cat > /tmp/vroom-format-probe.cpp <<'EOF'
+#include <format>
+#include <string>
+int main(){ return (int)std::format("v{}", 15).size() == 0; }
+EOF
+  for cand in g++ g++-14 g++-13 g++-15; do
+    if command -v "$cand" >/dev/null 2>&1 \
+      && "$cand" -std=c++20 -fsyntax-only /tmp/vroom-format-probe.cpp >/dev/null 2>&1; then
+      printf '%s' "$cand"
+      return 0
+    fi
+  done
+  log "Kein <format>-faehiger Compiler da — versuche g++-14 aus den Paketquellen ..."
+  if apt-get install -y gcc-14 g++-14 >/dev/null 2>&1; then
+    for cand in g++-14 g++-13 g++ g++-15; do
+      if command -v "$cand" >/dev/null 2>&1 \
+        && "$cand" -std=c++20 -fsyntax-only /tmp/vroom-format-probe.cpp >/dev/null 2>&1; then
+        printf '%s' "$cand"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Bitte als root im Container ausfuehren."
 export DEBIAN_FRONTEND=noninteractive
 
 # ---------------------------------------------------------------------------
 # 1. Basis + Build-Deps (idempotent)
 # ---------------------------------------------------------------------------
-log "apt update + Basis-Pakete ..."
+log "apt update ..."
 apt-get update 2>&1 | tail -n 3
-apt-get install -y --no-install-recommends \
-  ca-certificates curl wget gnupg git iproute2 procps systemd-sysv \
-  build-essential g++ pkg-config libssl-dev libasio-dev libglpk-dev \
-  2>&1 | tail -n 5
+run_step "Installiere Basis + Build-Deps" /tmp/vroom-apt.log \
+  apt-get install -y --no-install-recommends \
+    ca-certificates curl wget gnupg git iproute2 procps systemd-sysv \
+    build-essential g++ pkg-config libssl-dev libasio-dev libglpk-dev
 ok "Basis + Build-Deps vorhanden."
 
 # ---------------------------------------------------------------------------
@@ -105,7 +149,8 @@ if [[ "$NEED_NODE" -eq 1 ]]; then
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
   apt-get update 2>&1 | tail -n 3
-  apt-get install -y nodejs 2>&1 | tail -n 3
+  run_step "Installiere Node.js $NODE_MAJOR" /tmp/vroom-node.log \
+    apt-get install -y nodejs
 else
   log "Node bereits vorhanden: $(node --version)"
 fi
@@ -133,11 +178,19 @@ else
   else
     log "Klone vroom $VROOM_VERSION (mit Submodulen) ..."
     rm -rf "$SRC_DIR"
-    git clone --branch "$VROOM_VERSION" --recurse-submodules --depth 1 \
-      https://github.com/VROOM-Project/vroom.git "$SRC_DIR" 2>&1 | tail -n 5
+    run_step "Klone vroom $VROOM_VERSION" /tmp/vroom-clone.log \
+      git clone --branch "$VROOM_VERSION" --recurse-submodules --depth 1 \
+        https://github.com/VROOM-Project/vroom.git "$SRC_DIR"
   fi
-  log "Baue vroom (make, $(nproc) Threads — dauert wenige Minuten) ..."
-  make -C "$SRC_DIR/src" -j"$(nproc)" 2>&1 | tail -n 10
+  CXX_USED="$(pick_cxx)" \
+    || die "Kein C++20-<format>-Compiler (GCC>=13) verfuegbar. Distro: $(grep '^PRETTY_NAME=' /etc/os-release 2>/dev/null || echo unbekannt). Loesung: LXC neu erstellen mit Debian 13 (TEMPLATE=auto): alten CT per 'pct destroy <CTID>' entfernen + Installer erneut laufen lassen."
+  log "Compiler: $CXX_USED $("$CXX_USED" --version | head -n 1)"
+  # clean zuerst: alte .o-Dateien eines frueheren (GCC-12-)Builds duerfen
+  # nicht mit neuem Compiler gemischt gelinkt werden.
+  run_step "Bereinige alte Build-Artefakte" /tmp/vroom-clean.log \
+    make -C "$SRC_DIR/src" clean
+  run_step "Baue vroom mit $CXX_USED ($(nproc) Threads, dauert wenige Minuten)" /tmp/vroom-build.log \
+    make -C "$SRC_DIR/src" -j"$(nproc)" "CXX=$CXX_USED"
   [[ -x "$SRC_DIR/bin/vroom" ]] || die "Build fertig, aber $SRC_DIR/bin/vroom fehlt."
   cp "$SRC_DIR/bin/vroom" /usr/local/bin/vroom
   chmod +x /usr/local/bin/vroom
@@ -157,14 +210,16 @@ if [[ -d "$EXPRESS_DIR/.git" ]]; then
 else
   log "Klone vroom-express $VROOM_EXPRESS_VERSION ..."
   rm -rf "$EXPRESS_DIR"
-  git clone --branch "$VROOM_EXPRESS_VERSION" --depth 1 \
-    https://github.com/VROOM-Project/vroom-express.git "$EXPRESS_DIR" 2>&1 | tail -n 5
+  run_step "Klone vroom-express $VROOM_EXPRESS_VERSION" /tmp/vroom-express-clone.log \
+    git clone --branch "$VROOM_EXPRESS_VERSION" --depth 1 \
+      https://github.com/VROOM-Project/vroom-express.git "$EXPRESS_DIR"
 fi
 log "npm install (vroom-express, omit dev, ignore scripts) ..."
 # --ignore-scripts ist Pflicht: sonst laeuft das dev-only 'prepare' (husky install)
 # auch mit --omit=dev und bricht den Install mit Exit 127 ab, obwohl alle
 # Prod-Deps (reines JS: express, helmet, morgan, ...) schon installiert sind.
-npm --prefix "$EXPRESS_DIR" install --omit=dev --ignore-scripts 2>&1 | tail -n 5
+run_step "npm install vroom-express" /tmp/vroom-npm.log \
+  npm --prefix "$EXPRESS_DIR" install --omit=dev --ignore-scripts
 [[ -f "$EXPRESS_DIR/src/index.js" ]] || die "vroom-express unvollstaendig: $EXPRESS_DIR/src/index.js fehlt."
 ok "vroom-express bereit."
 
