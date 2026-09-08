@@ -57,17 +57,17 @@ trap error_trap ERR
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Benoetigt '$1' im Container."; }
 
-fetch() { # $1=url $2=dest — mit kompletter Fehlermeldung bei Misserfolg
+fetch() { # $1=url $2=dest — mit Retry + kompletter Fehlermeldung bei Misserfolg
   local url="$1" dest="$2" out ec
   log "Lade $url -> $dest"
   mkdir -p "$(dirname "$dest")"
-  if out=$(wget -O "$dest" "$url" 2>&1); then
+  if out=$(retry 3 5 wget -O "$dest" "$url" 2>&1); then
     ok "Geladen: $dest"
   else
     ec=$?
-    printf '%s\n' "----- wget stdout/stderr (Exit $ec) -----" >&2
+    printf '%s\n' "----- wget stdout/stderr (Exit $ec, nach 3 Versuchen) -----" >&2
     printf '%s\n' "$out" >&2
-    printf '%s\n' "-----------------------------------------" >&2
+    printf '%s\n' "------------------------------------------------------------" >&2
     die "Download fehlgeschlagen: $url (Exit $ec). RAW_BASE=$RAW_BASE — Repo schon gepusht?"
   fi
 }
@@ -116,6 +116,62 @@ EOF
   return 1
 }
 
+retry() { # $1=Versuche $2=Pause_Sek, Rest=Befehl — gegen wackelige Netze im LXC
+  local tries="$1" pause="$2"; shift 2
+  local i=1 ec=1
+  while [[ "$i" -le "$tries" ]]; do
+    if "$@"; then
+      return 0
+    else
+      ec=$?
+      if [[ "$i" -lt "$tries" ]]; then
+        warn "Versuch $i/$tries fehlgeschlagen (Exit $ec), retry in ${pause}s: $*"
+        sleep "$pause"
+      fi
+    fi
+    i=$((i + 1))
+  done
+  return "$ec"
+}
+
+wait_for_http() { # $1=URL $2=Timeout_Sek — wartet auf HTTP 2xx/3xx (langsamer Start)
+  local url="$1" timeout="${2:-60}" start now code
+  start="$(date +%s)"
+  while true; do
+    code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null || true)"
+    if [[ "$code" =~ ^[23] ]]; then return 0; fi
+    now="$(date +%s)"
+    if (( now - start >= timeout )); then
+      warn "Timeout ${timeout}s beim Warten auf $url (letzter Code: ${code:-kein Connect})"
+      return 1
+    fi
+    sleep 3
+  done
+}
+
+ensure_service() { # $1=Unit — enable + restart + warte auf active, sonst Logs + die
+  local unit="$1" i state
+  systemctl daemon-reload
+  systemctl enable "$unit" \
+    || die "systemctl enable $unit fehlgeschlagen."
+  systemctl restart "$unit" \
+    || { systemctl --no-pager status "$unit" 2>&1 | tail -n 30 >&2 || true
+         die "$unit startet nicht (restart fehlgeschlagen)."; }
+  for ((i = 1; i <= 10; i++)); do
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    if [[ "$state" == "active" ]]; then
+      ok "$unit ist active."
+      return 0
+    fi
+    sleep 3
+  done
+  printf '%s\n' "----- systemctl status $unit -----" >&2
+  systemctl --no-pager status "$unit" 2>&1 | tail -n 30 >&2 || true
+  printf '%s\n' "----- journalctl -u $unit -----" >&2
+  journalctl -u "$unit" --no-pager -n 60 2>&1 | tail -n 60 >&2 || true
+  die "$unit wurde nicht active (Timeout 30s)."
+}
+
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Bitte als root im Container ausfuehren."
 export DEBIAN_FRONTEND=noninteractive
 # pct exec setzt ein minimales PATH ohne /usr/local/bin — dort liegt aber
@@ -146,15 +202,17 @@ else
   NEED_NODE=1
 fi
 if [[ "$NEED_NODE" -eq 1 ]]; then
-  log "Installiere Node.js $NODE_MAJOR via NodeSource ..."
   mkdir -p /etc/apt/keyrings
-  curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
-    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  retry 3 5 curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" \
+      -o /tmp/nodesource.gpg.key \
+    || die "NodeSource-Key Download fehlgeschlagen (Netz/DNS pruefen)."
+  gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.gpg.key \
+    || die "GPG-Keyring schreiben fehlgeschlagen."
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list
   apt-get update 2>&1 | tail -n 3
   run_step "Installiere Node.js $NODE_MAJOR" /tmp/vroom-node.log \
-    apt-get install -y nodejs
+    retry 3 10 apt-get install -y nodejs
 else
   log "Node bereits vorhanden: $(node --version)"
 fi
@@ -175,15 +233,16 @@ if [[ "$FORCE_REBUILD" != "1" ]] && [[ -x /usr/local/bin/vroom ]] && [[ "$INSTAL
 else
   if [[ -d "$SRC_DIR/.git" ]]; then
     log "Update vroom-Source auf $VROOM_VERSION ..."
-    git -C "$SRC_DIR" fetch --depth 1 origin tag "$VROOM_VERSION" 2>&1 | tail -n 3 \
-      || git -C "$SRC_DIR" fetch --tags --recurse-submodules 2>&1 | tail -n 3
+    retry 3 10 git -C "$SRC_DIR" fetch --depth 1 origin tag "$VROOM_VERSION" > /tmp/vroom-fetch.log 2>&1 \
+      || retry 3 10 git -C "$SRC_DIR" fetch --tags --recurse-submodules > /tmp/vroom-fetch.log 2>&1 \
+      || { tail -n 20 /tmp/vroom-fetch.log >&2 || true; die "git fetch vroom fehlgeschlagen (Netz pruefen)."; }
+    tail -n 3 /tmp/vroom-fetch.log
     git -C "$SRC_DIR" checkout "$VROOM_VERSION" 2>&1 | tail -n 3
     git -C "$SRC_DIR" submodule update --init --recursive 2>&1 | tail -n 3
   else
-    log "Klone vroom $VROOM_VERSION (mit Submodulen) ..."
     rm -rf "$SRC_DIR"
-    run_step "Klone vroom $VROOM_VERSION" /tmp/vroom-clone.log \
-      git clone --branch "$VROOM_VERSION" --recurse-submodules --depth 1 \
+    run_step "Klone vroom $VROOM_VERSION (mit Submodulen)" /tmp/vroom-clone.log \
+      retry 3 10 git clone --branch "$VROOM_VERSION" --recurse-submodules --depth 1 \
         https://github.com/VROOM-Project/vroom.git "$SRC_DIR"
   fi
   CXX_USED="$(pick_cxx)" \
@@ -208,22 +267,23 @@ need_cmd vroom
 # ---------------------------------------------------------------------------
 if [[ -d "$EXPRESS_DIR/.git" ]]; then
   log "Update vroom-express auf $VROOM_EXPRESS_VERSION ..."
-  git -C "$EXPRESS_DIR" fetch --depth 1 origin tag "$VROOM_EXPRESS_VERSION" 2>&1 | tail -n 3 \
-    || git -C "$EXPRESS_DIR" fetch --tags 2>&1 | tail -n 3
+  retry 3 10 git -C "$EXPRESS_DIR" fetch --depth 1 origin tag "$VROOM_EXPRESS_VERSION" > /tmp/vroom-express-fetch.log 2>&1 \
+    || retry 3 10 git -C "$EXPRESS_DIR" fetch --tags > /tmp/vroom-express-fetch.log 2>&1 \
+    || { tail -n 20 /tmp/vroom-express-fetch.log >&2 || true; die "git fetch vroom-express fehlgeschlagen."; }
+  tail -n 3 /tmp/vroom-express-fetch.log
   git -C "$EXPRESS_DIR" checkout "$VROOM_EXPRESS_VERSION" 2>&1 | tail -n 3
 else
-  log "Klone vroom-express $VROOM_EXPRESS_VERSION ..."
   rm -rf "$EXPRESS_DIR"
   run_step "Klone vroom-express $VROOM_EXPRESS_VERSION" /tmp/vroom-express-clone.log \
-    git clone --branch "$VROOM_EXPRESS_VERSION" --depth 1 \
+    retry 3 10 git clone --branch "$VROOM_EXPRESS_VERSION" --depth 1 \
       https://github.com/VROOM-Project/vroom-express.git "$EXPRESS_DIR"
 fi
-log "npm install (vroom-express, omit dev, ignore scripts) ..."
 # --ignore-scripts ist Pflicht: sonst laeuft das dev-only 'prepare' (husky install)
 # auch mit --omit=dev und bricht den Install mit Exit 127 ab, obwohl alle
 # Prod-Deps (reines JS: express, helmet, morgan, ...) schon installiert sind.
+# --no-audit/--no-fund: weniger Registry-Roundtrips = weniger Flakiness.
 run_step "npm install vroom-express" /tmp/vroom-npm.log \
-  npm --prefix "$EXPRESS_DIR" install --omit=dev --ignore-scripts
+  retry 2 10 npm --prefix "$EXPRESS_DIR" install --omit=dev --ignore-scripts --no-audit --no-fund
 [[ -f "$EXPRESS_DIR/src/index.js" ]] || die "vroom-express unvollstaendig: $EXPRESS_DIR/src/index.js fehlt."
 ok "vroom-express bereit."
 
@@ -255,29 +315,27 @@ grep -E "ExecStart|Environment" /etc/systemd/system/vroom-api.service /etc/syste
 # ---------------------------------------------------------------------------
 # 6. systemd: reboot-sicher (enable + Restart=always + After=network-online.target)
 # ---------------------------------------------------------------------------
-log "Aktiviere + starte vroom-api + vroom-web ..."
-systemctl daemon-reload
-systemctl enable vroom-api vroom-web 2>&1 | tail -n 4
-systemctl restart vroom-api
-systemctl restart vroom-web
-sleep 6
+log "Aktiviere + starte vroom-api + vroom-web (reboot-sicher) ..."
+ensure_service vroom-api
+ensure_service vroom-web
 
 # ---------------------------------------------------------------------------
 # 7. Verifikation (Anforderung #7): Service + HTTP + Solve
 # ---------------------------------------------------------------------------
 log "Verifiziere ..."
-systemctl is-active vroom-api || die "vroom-api nicht active."
-systemctl is-active vroom-web || die "vroom-web nicht active."
+[[ "$(systemctl is-active vroom-api 2>/dev/null)" == "active" ]] \
+  || die "vroom-api ist nicht active."
+[[ "$(systemctl is-active vroom-web 2>/dev/null)" == "active" ]] \
+  || die "vroom-web ist nicht active."
 
-log "API-Health (Port $API_PORT) ..."
-curl -fsS -m 15 "http://127.0.0.1:${API_PORT}/health" -o /dev/null \
-  || die "curl http://127.0.0.1:${API_PORT}/health schlug fehl."
-
-log "Web-Health (Port $WEB_PORT) ..."
-curl -fsS -m 15 "http://127.0.0.1:${WEB_PORT}/health" -o /dev/null \
-  || die "curl http://127.0.0.1:${WEB_PORT}/health schlug fehl."
-curl -fsS -m 15 "http://127.0.0.1:${WEB_PORT}/" -o /dev/null \
-  || die "curl http://127.0.0.1:${WEB_PORT}/ (Web UI) schlug fehl."
+wait_for_http "http://127.0.0.1:${API_PORT}/health" 90 \
+  || die "API antwortet nicht auf http://127.0.0.1:${API_PORT}/health — journalctl -u vroom-api pruefen."
+ok "API-Health OK (Port $API_PORT)."
+wait_for_http "http://127.0.0.1:${WEB_PORT}/health" 60 \
+  || die "Web-Gateway antwortet nicht auf http://127.0.0.1:${WEB_PORT}/health — journalctl -u vroom-web pruefen."
+wait_for_http "http://127.0.0.1:${WEB_PORT}/" 60 \
+  || die "Web-UI antwortet nicht auf http://127.0.0.1:${WEB_PORT}/."
+ok "Web-Health + Web-UI OK (Port $WEB_PORT)."
 
 log "Solve-Test (Matrix-Modus, voll lokal, ohne OSRM) ..."
 API_OUT="$(curl -fsS -m 60 -H 'Content-Type: application/json' \

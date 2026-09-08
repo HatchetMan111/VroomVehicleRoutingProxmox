@@ -113,6 +113,20 @@ wait_for_ct() { # wartet bis pct exec geht
   die "Container $ctid antwortet nicht auf 'pct exec' (Timeout ~150s)."
 }
 
+ct_curl() { # $1=ctid $2=url — curl im CT mit Retry + letzte Ausgabe bei Misserfolg
+  local ctid="$1" url="$2" i out
+  for ((i = 1; i <= 5; i++)); do
+    if out=$(pct exec "$ctid" -- curl -fsS -m 10 "$url" -o /dev/null 2>&1); then
+      return 0
+    fi
+    sleep 5
+  done
+  printf '%s\n' "----- letzter curl-Versuch im CT $ctid ($url, nach 5 Versuchen) -----" >&2
+  printf '%s\n' "$out" >&2
+  printf '%s\n' "---------------------------------------------------------------------" >&2
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # 0. Preflight (muss auf dem Proxmox-Host als root laufen)
 # ---------------------------------------------------------------------------
@@ -274,11 +288,11 @@ pct exec "$CTID" -- systemctl is-active vroom-api \
   || die "vroom-api ist nicht active (pct exec $CTID -- journalctl -u vroom-api -n 100)."
 pct exec "$CTID" -- systemctl is-active vroom-web \
   || die "vroom-web ist nicht active (pct exec $CTID -- journalctl -u vroom-web -n 100)."
-pct exec "$CTID" -- curl -fsS "http://127.0.0.1:${API_PORT}/health" -o /dev/null \
+ct_curl "$CTID" "http://127.0.0.1:${API_PORT}/health" \
   || die "API-Healthcheck fehlgeschlagen (curl localhost:${API_PORT}/health im Container)."
-pct exec "$CTID" -- curl -fsS "http://127.0.0.1:${WEB_PORT}/health" -o /dev/null \
+ct_curl "$CTID" "http://127.0.0.1:${WEB_PORT}/health" \
   || die "Web-Healthcheck fehlgeschlagen (curl localhost:${WEB_PORT}/health im Container)."
-pct exec "$CTID" -- curl -fsS "http://127.0.0.1:${WEB_PORT}/" -o /dev/null \
+ct_curl "$CTID" "http://127.0.0.1:${WEB_PORT}/" \
   || die "Web-UI antwortet nicht (curl localhost:${WEB_PORT}/ im Container)."
 ok "Services laufen, API + Web UI antworten."
 
