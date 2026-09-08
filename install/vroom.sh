@@ -104,13 +104,28 @@ ct_ip() { # $1=ctid -> erste IPv4 via pct exec
   printf '%s' "$ip"
 }
 
-wait_for_ct() { # wartet bis pct exec geht
+wait_for_ct() { # wartet bis pct exec geht (sagt NICHTS ueber Container-Netz!)
   local ctid="$1" tries=30
   for ((i = 1; i <= tries; i++)); do
     if pct exec "$ctid" -- true >/dev/null 2>&1; then return 0; fi
     sleep 5
   done
   die "Container $ctid antwortet nicht auf 'pct exec' (Timeout ~150s)."
+}
+
+wait_for_net() { # wartet bis der CT wirklich ins Netz kommt (DNS + HTTPS)
+  # pct exec funktioniert per lxc-attach auch OHNE Container-Netz — deshalb
+  # reicht wait_for_ct nicht: der Setup-Download waere der erste Netz-Zugriff.
+  local ctid="$1" tries="${WAIT_TRIES:-18}" pause="${WAIT_SLEEP:-5}" i
+  log "Warte auf CT-Netz (DNS/HTTPS, max ~$((tries * (pause + 10)))s) ..."
+  for ((i = 1; i <= tries; i++)); do
+    if pct exec "$ctid" -- wget -q --timeout=10 --tries=1 --spider "$SETUP_URL" >/dev/null 2>&1; then
+      ok "CT-Netz bereit (Versuch $i/$tries)."
+      return 0
+    fi
+    sleep "$pause"
+  done
+  die "Container $ctid kommt nicht ins Netz (wget --spider $SETUP_URL schlug ${tries}x fehl). Pruefen: 'pct exec $ctid -- getent hosts raw.githubusercontent.com' (DHCP/DNS?), Firewall/Proxy, oder URL im Browser oeffnen."
 }
 
 ct_curl() { # $1=ctid $2=url — curl im CT mit Retry + letzte Ausgabe bei Misserfolg
@@ -258,7 +273,7 @@ else
 fi
 
 wait_for_ct "$CTID"
-sleep 5 # Debian-Template braucht kurz bis systemd/apt bereit sind
+wait_for_net "$CTID"
 
 # ---------------------------------------------------------------------------
 # 2. Setup im Container (GitHub-first: setup.sh wird von RAW_BASE gezogen)
@@ -274,7 +289,17 @@ export WEB_PORT="$WEB_PORT"
 export RAW_BASE="$RAW_BASE"
 export SETUP_URL="$SETUP_URL"
 echo "[in-lxc] Lade Setup: \$SETUP_URL"
-wget -qO /tmp/vroom-setup.sh "\$SETUP_URL" || { echo "[in-lxc] FEHLER: Setup-Download fehlgeschlagen von \$SETUP_URL" >&2; exit 1; }
+DL_OK=0
+for DL_TRY in 1 2 3; do
+  if wget -q --timeout=20 --tries=2 -O /tmp/vroom-setup.sh "\$SETUP_URL"; then DL_OK=1; break; fi
+  echo "[in-lxc] Download-Versuch \$DL_TRY/3 fehlgeschlagen, retry in 5s ..." >&2
+  sleep 5
+done
+if [[ "\$DL_OK" != "1" ]]; then
+  echo "[in-lxc] FEHLER: Setup-Download fehlgeschlagen von \$SETUP_URL" >&2
+  echo "[in-lxc] Pruefe DNS/Netz im Container: getent hosts raw.githubusercontent.com; ip route" >&2
+  exit 1
+fi
 chmod +x /tmp/vroom-setup.sh
 bash /tmp/vroom-setup.sh
 EOF
