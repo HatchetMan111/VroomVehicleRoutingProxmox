@@ -1,0 +1,18 @@
+[Unit]
+Description=VROOM API (vroom-express, Port __API_PORT__)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vroom/vroom-express
+ExecStart=/usr/bin/node /opt/vroom/vroom-express/src/index.js
+Restart=always
+RestartSec=3
+Environment=VROOM_ROUTER=osrm
+Environment=VROOM_LOG=/var/log/vroom
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

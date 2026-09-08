@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VROOM lokal – Routenoptimierung</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+  header { background: #1e293b; padding: 16px 24px; border-bottom: 1px solid #334155; }
+  h1 { margin: 0; font-size: 20px; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  textarea { width: 100%; min-height: 220px; font-family: monospace; background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 10px; }
+  button { background: #22c55e; border: 0; border-radius: 8px; padding: 10px 18px; font-weight: 700; cursor: pointer; margin-right: 8px; }
+  button.sec { background: #334155; color: #fff; }
+  pre { background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 12px; overflow: auto; max-height: 420px; white-space: pre-wrap; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  small { color: #94a3b8; }
+  a { color: #86efac; }
+</style>
+</head>
+<body>
+<header><h1>VROOM lokal — Vehicle Routing Optimization (Port 8080 UI / 3000 API)</h1></header>
+<main>
+  <div class="card">
+    <b>Status:</b> <span id="status">prüfe …</span>
+    <div class="row">
+      <button class="sec" onclick="health()">Health-Check</button>
+      <button onclick="solve()">Optimieren (POST /solve)</button>
+      <button class="sec" onclick="loadExample()">Beispiel laden</button>
+    </div>
+    <small>Läuft vollständig lokal im LXC. Matrix-Modus braucht <b>keinen</b> Routing-Server (kein OSRM nötig).
+    Echte Koordinaten (lon/lat) brauchen optional OSRM/ORS/Valhalla → siehe <a href="https://github.com/VROOM-Project/vroom/blob/master/docs/API.md" target="_blank">VROOM API-Doku</a>.</small>
+  </div>
+  <div class="card">
+    <b>Eingabe (VROOM-JSON):</b>
+    <textarea id="input" spellcheck="false"></textarea>
+  </div>
+  <div class="card">
+    <b>Ergebnis:</b>
+    <pre id="output">Noch keine Anfrage.</pre>
+  </div>
+  <div class="card"><small>
+    API direkt: <code>POST http://&lt;LXC-IP&gt;:3000/ mit Content-Type: application/json</code> ·
+    Health: <code>GET /health</code> (UI + API) ·
+    Beispiel: <code>curl -H 'Content-Type: application/json' --data @example-matrix.json http://&lt;LXC-IP&gt;:8080/solve</code>
+  </small></div>
+</main>
+<script>
+const EXAMPLE = {
+  "vehicles": [{ "id": 0, "start_index": 0, "end_index": 3, "capacity": [4] }],
+  "jobs": [
+    { "id": 0, "location_index": 1, "delivery": [1] },
+    { "id": 1, "location_index": 2, "delivery": [2] }
+  ],
+  "matrices": { "car": { "durations": [[0,210,320,150],[210,0,150,240],[320,150,0,200],[150,240,200,0]] } }
+};
+const $ = id => document.getElementById(id);
+function loadExample() { $('input').value = JSON.stringify(EXAMPLE, null, 2); }
+async function health() {
+  $('status').textContent = 'prüfe …';
+  try {
+    const r = await fetch('/health');
+    const j = await r.json();
+    $('status').textContent = 'HTTP ' + r.status + ' ' + JSON.stringify(j);
+    $('output').textContent = JSON.stringify(j, null, 2);
+  } catch (e) { $('status').textContent = 'FEHLER: ' + e; $('output').textContent = String(e && e.stack || e); }
+}
+async function solve() {
+  $('output').textContent = 'Sende …';
+  try {
+    const r = await fetch('/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: $('input').value });
+    const t = await r.text();
+    $('output').textContent = 'HTTP ' + r.status + '\n' + t;
+  } catch (e) { $('output').textContent = 'FEHLERKETTE:\n' + String(e && e.stack || e); }
+}
+loadExample(); health();
+</script>
+</body>
+</html>

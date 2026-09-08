@@ -1,0 +1,18 @@
+[Unit]
+Description=VROOM Web UI Gateway (Port __WEB_PORT__, Proxy auf API __API_PORT__)
+After=network-online.target vroom-api.service
+Wants=network-online.target vroom-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vroom/web
+ExecStart=/usr/bin/node /opt/vroom/web/server.js
+Restart=always
+RestartSec=3
+Environment=WEB_PORT=__WEB_PORT__
+Environment=API_URL=http://127.0.0.1:__API_PORT__
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
