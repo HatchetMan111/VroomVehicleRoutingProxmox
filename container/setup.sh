@@ -118,6 +118,10 @@ EOF
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "Bitte als root im Container ausfuehren."
 export DEBIAN_FRONTEND=noninteractive
+# pct exec setzt ein minimales PATH ohne /usr/local/bin — dort liegt aber
+# unser vroom-Binary. Ohne diese Zeile scheitert 'command -v vroom' (need_cmd),
+# obwohl die Datei existiert.
+export PATH="/usr/local/bin:$PATH"
 
 # ---------------------------------------------------------------------------
 # 1. Basis + Build-Deps (idempotent)

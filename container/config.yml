@@ -14,7 +14,7 @@ cliArgs:
   maxlocations: 1000
   maxvehicles: 200
   override: ['c', 'g', 'l', 't', 'x']
-  path: ''
+  path: '/usr/local/bin'
   port: 3000
   router: 'osrm'
   timeout: 300000
