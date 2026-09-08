@@ -11,6 +11,7 @@ Restart=always
 RestartSec=3
 Environment=VROOM_ROUTER=osrm
 Environment=VROOM_LOG=/var/log/vroom
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=journal
 StandardError=journal
 

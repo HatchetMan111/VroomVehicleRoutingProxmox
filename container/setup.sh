@@ -287,6 +287,19 @@ run_step "npm install vroom-express" /tmp/vroom-npm.log \
 [[ -f "$EXPRESS_DIR/src/index.js" ]] || die "vroom-express unvollstaendig: $EXPRESS_DIR/src/index.js fehlt."
 ok "vroom-express bereit."
 
+# Healthcheck-Input im v1.15-Format: Upstream-v0.12.0 nutzt noch das alte
+# Top-Level-"matrix"-Format, das vroom >= 1.9 ablehnt -> /health lieferte HTTP 500.
+# (Muss NACH git checkout stehen, der die Upstream-Datei zurueckholt.)
+fetch "$RAW_BASE/container/healthchecks/vroom_custom_matrix.json" \
+  "$EXPRESS_DIR/healthchecks/vroom_custom_matrix.json"
+# Sofort validieren: vroom muss code 0 liefern — sonst gaebe es spaeter nur
+# opakes HTTP 500 statt einer klaren Fehlermeldung.
+VROOM_PRE_OUT="$(/usr/local/bin/vroom -i "$EXPRESS_DIR/healthchecks/vroom_custom_matrix.json" 2>&1)" \
+  || die "vroom scheitert am Health-Input. Ausgabe: $VROOM_PRE_OUT"
+echo "$VROOM_PRE_OUT" | grep -q '"code":0' \
+  || die "vroom-Health-Input unerwartet (kein code 0): $VROOM_PRE_OUT"
+ok "Health-Input validiert (vroom code 0)."
+
 # config.yml: NUR cliArgs-Port anpassen (Rest = Upstream-Defaults).
 # WICHTIG: 0,/.../ adressiert nur das ERSTE port:-Vorkommen (cliArgs) —
 # ein globales s/// wuerde auch die routingServers-Ports (5000/5001/...) zerschiesen.
@@ -329,7 +342,9 @@ log "Verifiziere ..."
   || die "vroom-web ist nicht active."
 
 wait_for_http "http://127.0.0.1:${API_PORT}/health" 90 \
-  || die "API antwortet nicht auf http://127.0.0.1:${API_PORT}/health — journalctl -u vroom-api pruefen."
+  || { printf '%s\n' "----- journalctl -u vroom-api (letzte 30) -----" >&2
+       journalctl -u vroom-api --no-pager -n 30 2>&1 | tail -n 30 >&2 || true
+       die "API antwortet nicht auf http://127.0.0.1:${API_PORT}/health."; }
 ok "API-Health OK (Port $API_PORT)."
 wait_for_http "http://127.0.0.1:${WEB_PORT}/health" 60 \
   || die "Web-Gateway antwortet nicht auf http://127.0.0.1:${WEB_PORT}/health — journalctl -u vroom-web pruefen."

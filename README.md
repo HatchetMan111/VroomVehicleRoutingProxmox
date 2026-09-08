@@ -102,8 +102,10 @@ pct stop <CTID> && pct destroy <CTID>
 ```
 install/vroom.sh            # Host-Installer (Community-Scripts-Stil, Variablen oben)
 container/setup.sh          # Setup IM LXC (idempotent, volle Fehlerkette)
-container/config.yml        # vroom-express Config (Port/Logdir werden gesetzt)
+container/config.yml        # vroom-express Config (Port wird gesetzt)
 container/example-matrix.json
+container/healthchecks/vroom_custom_matrix.json # Health-Input im v1.15-Matrix-Format
+  # (Upstream nutzt altes Format -> gaebe HTTP 500 auf /health)
 container/vroom-api.service # systemd API :3000
 container/vroom-web.service # systemd Web-Gateway :8080
 container/web/server.js     # Gateway (nur Node-Core, Proxy + Static)
