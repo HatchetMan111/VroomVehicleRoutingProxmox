@@ -7,7 +7,10 @@ Lokale Routenoptimierung mit [VROOM](https://github.com/VROOM-Project/vroom) (C+
 im Stil der **Proxmox VE Community Scripts**. Keine Cloud nötig: der Matrix-Modus rechnet
 vollständig lokal; ein Routing-Server (OSRM/ORS/Valhalla) ist nur für echte lon/lat-Koordinaten optional.
 
-- **Web UI:** `http://<LXC-IP>:8080/` (Gateway, bind `0.0.0.0`, statische UI + Proxy)
+- **Web UI:** `http://<LXC-IP>:8080/` (Gateway, bind `0.0.0.0`): Routenplaner mit
+  Fahrzeug-/Auftrags-Formularen, Zeitmatrix-Editor, Ergebnis mit Routenplan,
+  schematischer Karte und Kostenübersicht – kein JSON-Handarbeit nötig, kein
+  Internet nötig (keine CDN-Abhängigkeiten)
 - **API:** `http://<LXC-IP>:3000/` (`POST` VROOM-JSON, `GET /health`)
 - **Systemd:** `vroom-api` + `vroom-web` (`enable`, `Restart=always`, `After=network-online.target`), Container `onboot: 1`
 - **Default-Ressourcen:** 2 vCPU, 2 GB RAM, 8 GB Disk, Debian 13 (auto, unprivilegiert)
@@ -109,7 +112,7 @@ container/healthchecks/vroom_custom_matrix.json # Health-Input im v1.15-Matrix-F
 container/vroom-api.service # systemd API :3000
 container/vroom-web.service # systemd Web-Gateway :8080
 container/web/server.js     # Gateway (nur Node-Core, Proxy + Static)
-container/web/index.html    # Web UI (Beispiel + Solve + Health)
+container/web/public/index.html # Planer-UI (Formulare, Matrix-Editor, Karte)
 ```
 
 ## LXC oder VM?

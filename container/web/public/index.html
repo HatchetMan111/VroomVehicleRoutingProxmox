@@ -3,78 +3,388 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VROOM lokal – Routenoptimierung</title>
+<title>VROOM – Routenplaner (lokal)</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
-  header { background: #1e293b; padding: 16px 24px; border-bottom: 1px solid #334155; }
-  h1 { margin: 0; font-size: 20px; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px; }
-  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  textarea { width: 100%; min-height: 220px; font-family: monospace; background: #0b1220; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 10px; }
-  button { background: #22c55e; border: 0; border-radius: 8px; padding: 10px 18px; font-weight: 700; cursor: pointer; margin-right: 8px; }
-  button.sec { background: #334155; color: #fff; }
-  pre { background: #0b1220; border: 1px solid #334155; border-radius: 8px; padding: 12px; overflow: auto; max-height: 420px; white-space: pre-wrap; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
-  small { color: #94a3b8; }
+  :root { --bg:#0f172a; --card:#1e293b; --line:#334155; --txt:#e2e8f0; --mut:#94a3b8;
+          --grn:#22c55e; --red:#ef4444; --amber:#f59e0b; --acc:#38bdf8; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--txt); }
+  header { background: var(--card); padding: 14px 24px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 19px; }
+  .pill { border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 700; background: var(--line); }
+  .pill.ok { background: #14532d; color: #86efac; }
+  .pill.bad { background: #7f1d1d; color: #fca5a5; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 16px; }
+  .hint { color: var(--mut); font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 6px; text-align: left; font-size: 14px; }
+  th { color: var(--mut); font-weight: 600; }
+  input[type=number], select { background: #0b1220; color: var(--txt); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; width: 100%; }
+  input[type=number] { max-width: 110px; }
+  td.num input { max-width: 90px; }
+  button { background: var(--grn); border: 0; border-radius: 8px; padding: 10px 18px;
+    font-weight: 700; cursor: pointer; color: #052e16; font-size: 14px; }
+  button.sec { background: var(--line); color: #fff; }
+  button.warn { background: var(--amber); color: #451a03; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; align-items: center; }
+  .grid { display: grid; gap: 4px; }
+  .grid input { max-width: none; text-align: right; padding: 5px; font-size: 13px; }
+  .grid .diag { background: #052e16; }
+  .grid .hd { background: transparent; border: 0; color: var(--mut); font-weight: 700; text-align: center; }
+  .sumcards { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+  .sum { background: #0b1220; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; min-width: 130px; }
+  .sum b { display: block; font-size: 20px; }
+  .sum span { color: var(--mut); font-size: 12px; }
+  .route { border-left: 5px solid var(--grn); background: #0b1220; border-radius: 0 8px 8px 0;
+    padding: 10px 12px; margin: 10px 0; }
+  .route h3 { margin: 0 0 6px; font-size: 15px; }
+  .steps { list-style: none; margin: 6px 0 0; padding: 0; font-size: 13px; }
+  .steps li { padding: 4px 0; border-top: 1px dashed var(--line); }
+  .badge { display: inline-block; border-radius: 5px; padding: 1px 7px; font-size: 12px; font-weight: 700; margin-right: 6px; }
+  .b-start { background: #1d4ed8; } .b-job { background: #0e7490; } .b-end { background: #6b21a8; }
+  .b-unas { background: var(--red); }
+  pre { background: #0b1220; border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    overflow: auto; max-height: 320px; white-space: pre-wrap; font-size: 12px; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--acc); font-size: 14px; }
+  #map { width: 100%; height: auto; background: #0b1220; border: 1px solid var(--line); border-radius: 8px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; margin-top: 6px; }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 4px; vertical-align: baseline; }
   a { color: #86efac; }
 </style>
 </head>
 <body>
-<header><h1>VROOM lokal — Vehicle Routing Optimization (Port 8080 UI / 3000 API)</h1></header>
+<header>
+  <h1>VROOM – Routenplaner (lokal)</h1>
+  <span id="status" class="pill">prüfe …</span>
+  <span style="flex:1"></span>
+  <button class="sec" id="btnHealth" type="button">Health-Check</button>
+  <button class="sec" id="btnSample" type="button">Beispiel laden</button>
+</header>
 <main>
   <div class="card">
-    <b>Status:</b> <span id="status">prüfe …</span>
+    <h2>1 · Fahrzeuge</h2>
+    <table id="vehTable"><thead><tr>
+      <th>ID</th><th>Start-Ort</th><th>Ziel-Ort</th><th class="num">Kapazität</th><th></th>
+    </tr></thead><tbody></tbody></table>
+    <div class="row"><button class="sec" id="btnAddVeh" type="button">+ Fahrzeug</button></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Aufträge (Jobs)</h2>
+    <table id="jobTable"><thead><tr>
+      <th>ID</th><th>Ort</th><th class="num">Bedarf</th><th></th>
+    </tr></thead><tbody></tbody></table>
+    <div class="row"><button class="sec" id="btnAddJob" type="button">+ Auftrag</button></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Zeitmatrix (Sekunden Fahrzeit zwischen Orten)</h2>
     <div class="row">
-      <button class="sec" onclick="health()">Health-Check</button>
-      <button onclick="solve()">Optimieren (POST /solve)</button>
-      <button class="sec" onclick="loadExample()">Beispiel laden</button>
+      <label>Orte (N): <input type="number" id="nLoc" min="2" max="30" value="4" style="max-width:70px"></label>
+      <button class="sec" id="btnResize" type="button">Matrix anpassen</button>
+      <span class="hint">Orte sind Nummern 0…N−1. Diagonale = 0.</span>
     </div>
-    <small>Läuft vollständig lokal im LXC. Matrix-Modus braucht <b>keinen</b> Routing-Server (kein OSRM nötig).
-    Echte Koordinaten (lon/lat) brauchen optional OSRM/ORS/Valhalla → siehe <a href="https://github.com/VROOM-Project/vroom/blob/master/docs/API.md" target="_blank">VROOM API-Doku</a>.</small>
+    <div id="matrixWrap" style="overflow:auto"></div>
   </div>
+
   <div class="card">
-    <b>Eingabe (VROOM-JSON):</b>
-    <textarea id="input" spellcheck="false"></textarea>
+    <h2>4 · Optimieren</h2>
+    <div class="row">
+      <button id="btnSolve" type="button">Optimieren (POST /solve)</button>
+      <span class="hint">Rechnet vollständig lokal im LXC (Matrix-Modus, kein Routing-Server nötig).</span>
+    </div>
   </div>
-  <div class="card">
-    <b>Ergebnis:</b>
-    <pre id="output">Noch keine Anfrage.</pre>
+
+  <div class="card" id="resultCard" hidden>
+    <h2>Ergebnis</h2>
+    <div id="unassigned"></div>
+    <div class="sumcards" id="summary"></div>
+    <h2>Karte (schematisch)</h2>
+    <svg id="map" viewBox="0 0 600 380" role="img" aria-label="Routenkarte"></svg>
+    <div class="legend" id="legend"></div>
+    <h2>Routen</h2>
+    <div id="routes"></div>
+    <details><summary>Experte: gesendetes JSON + Roh-Antwort</summary>
+      <pre id="rawOut">–</pre>
+    </details>
   </div>
-  <div class="card"><small>
-    API direkt: <code>POST http://&lt;LXC-IP&gt;:3000/ mit Content-Type: application/json</code> ·
-    Health: <code>GET /health</code> (UI + API) ·
-    Beispiel: <code>curl -H 'Content-Type: application/json' --data @example-matrix.json http://&lt;LXC-IP&gt;:8080/solve</code>
-  </small></div>
 </main>
 <script>
-const EXAMPLE = {
-  "vehicles": [{ "id": 0, "start_index": 0, "end_index": 3, "capacity": [4] }],
-  "jobs": [
-    { "id": 0, "location_index": 1, "delivery": [1] },
-    { "id": 1, "location_index": 2, "delivery": [2] }
-  ],
-  "matrices": { "car": { "durations": [[0,210,320,150],[210,0,150,240],[320,150,0,200],[150,240,200,0]] } }
-};
-const $ = id => document.getElementById(id);
-function loadExample() { $('input').value = JSON.stringify(EXAMPLE, null, 2); }
-async function health() {
-  $('status').textContent = 'prüfe …';
-  try {
-    const r = await fetch('/health');
-    const j = await r.json();
-    $('status').textContent = 'HTTP ' + r.status + ' ' + JSON.stringify(j);
-    $('output').textContent = JSON.stringify(j, null, 2);
-  } catch (e) { $('status').textContent = 'FEHLER: ' + e; $('output').textContent = String(e && e.stack || e); }
+'use strict';
+/* State (reine Daten, kein DOM) — per module.exports unten in Node testbar. */
+var PALETTE = ['#22c55e','#38bdf8','#f59e0b','#e879f9','#f87171','#a3e635','#2dd4bf','#facc15'];
+
+function defaultState() {
+  return {
+    vehicles: [{id: 0, start: 0, end: 3, capacity: 4}],
+    jobs: [{id: 0, loc: 1, demand: 1}, {id: 1, loc: 2, demand: 2}],
+    matrix: [[0,210,320,150],[210,0,150,240],[320,150,0,200],[150,240,200,0]]
+  };
 }
-async function solve() {
-  $('output').textContent = 'Sende …';
-  try {
-    const r = await fetch('/solve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: $('input').value });
-    const t = await r.text();
-    $('output').textContent = 'HTTP ' + r.status + '\n' + t;
-  } catch (e) { $('output').textContent = 'FEHLERKETTE:\n' + String(e && e.stack || e); }
+
+function nLocOf(state) { return state.matrix.length; }
+
+function resizeMatrix(state, n) {
+  n = Math.max(2, Math.min(30, n | 0));
+  var m = state.matrix, i, j;
+  while (m.length < n) { m.push([]); }
+  m.length = n;
+  for (i = 0; i < n; i++) {
+    for (j = m[i].length; j < n; j++) { m[i].push(i === j ? 0 : 300); }
+    m[i].length = n;
+    m[i][i] = 0;
+  }
+  return state;
 }
-loadExample(); health();
+
+/* Baut das VROOM-Request-JSON aus dem State (reine Funktion). */
+function buildPayload(state) {
+  var n = nLocOf(state);
+  function clampIdx(v) { v = v | 0; if (v < 0) return 0; if (v > n - 1) return n - 1; return v; }
+  return {
+    vehicles: state.vehicles.map(function (v) {
+      return {id: v.id | 0, start_index: clampIdx(v.start), end_index: clampIdx(v.end),
+              capacity: [Math.max(0, v.capacity | 0)]};
+    }),
+    jobs: state.jobs.map(function (j) {
+      return {id: j.id | 0, location_index: clampIdx(j.loc), delivery: [Math.max(0, j.demand | 0)]};
+    }),
+    matrices: {car: {durations: state.matrix.map(function (row) {
+      return row.map(function (c) { c = +c; return c >= 0 ? c : 0; });
+    })}}
+  };
+}
+
+/* Kreis-Layout für N Orte (reine Funktion -> [{x,y}]). */
+function layoutNodes(n, w, h) {
+  var cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 40, out = [], i;
+  for (i = 0; i < n; i++) {
+    var a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    out.push({x: Math.round(cx + r * Math.cos(a)), y: Math.round(cy + r * Math.sin(a))});
+  }
+  return out;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {defaultState: defaultState, resizeMatrix: resizeMatrix,
+    buildPayload: buildPayload, layoutNodes: layoutNodes, PALETTE: PALETTE};
+} else {
+  /* ---- Browser-UI ---- */
+  var state = defaultState();
+  var $ = function (id) { return document.getElementById(id); };
+
+  function locOptions(sel, n) {
+    var h = '', i;
+    for (i = 0; i < n; i++) { h += '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>' + i + '</option>'; }
+    return h;
+  }
+
+  function renderVehicles() {
+    var tb = $('vehTable').querySelector('tbody'), n = nLocOf(state), h = '';
+    state.vehicles.forEach(function (v, i) {
+      h += '<tr><td><input type="number" data-v="' + i + '" data-k="id" value="' + v.id + '"></td>' +
+        '<td><select data-v="' + i + '" data-k="start">' + locOptions(v.start, n) + '</select></td>' +
+        '<td><select data-v="' + i + '" data-k="end">' + locOptions(v.end, n) + '</select></td>' +
+        '<td class="num"><input type="number" min="0" data-v="' + i + '" data-k="capacity" value="' + v.capacity + '"></td>' +
+        '<td><button class="sec" data-delveh="' + i + '" type="button">−</button></td></tr>';
+    });
+    tb.innerHTML = h || '<tr><td colspan="5" class="hint">Kein Fahrzeug – bitte eines hinzufügen.</td></tr>';
+  }
+
+  function renderJobs() {
+    var tb = $('jobTable').querySelector('tbody'), n = nLocOf(state), h = '';
+    state.jobs.forEach(function (j, i) {
+      h += '<tr><td><input type="number" data-j="' + i + '" data-k="id" value="' + j.id + '"></td>' +
+        '<td><select data-j="' + i + '" data-k="loc">' + locOptions(j.loc, n) + '</select></td>' +
+        '<td class="num"><input type="number" min="0" data-j="' + i + '" data-k="demand" value="' + j.demand + '"></td>' +
+        '<td><button class="sec" data-deljob="' + i + '" type="button">−</button></td></tr>';
+    });
+    tb.innerHTML = h || '<tr><td colspan="4" class="hint">Kein Auftrag – bitte einen hinzufügen.</td></tr>';
+  }
+
+  function renderMatrix() {
+    var n = nLocOf(state), w = $('matrixWrap'), h = '<div class="grid" style="grid-template-columns:34px repeat(' + n + ',1fr)">';
+    var i, j;
+    h += '<span class="hd"></span>';
+    for (j = 0; j < n; j++) { h += '<span class="hd">' + j + '</span>'; }
+    for (i = 0; i < n; i++) {
+      h += '<span class="hd">' + i + '</span>';
+      for (j = 0; j < n; j++) {
+        h += '<input type="number" min="0" data-m="' + i + ':' + j + '" value="' + state.matrix[i][j] + '"' +
+          (i === j ? ' class="diag" readonly' : '') + '>';
+      }
+    }
+    w.innerHTML = h + '</div>';
+    $('nLoc').value = n;
+  }
+
+  function renderAll() { renderVehicles(); renderJobs(); renderMatrix(); }
+
+  document.addEventListener('change', function (e) {
+    var t = e.target, v, j, m;
+    if (t.dataset.v !== undefined) {
+      v = state.vehicles[+t.dataset.v]; if (!v) return;
+      v[t.dataset.k] = (t.dataset.k === 'id' || t.dataset.k === 'capacity') ? (+t.value || 0) : (+t.value || 0);
+    } else if (t.dataset.j !== undefined) {
+      j = state.jobs[+t.dataset.j]; if (!j) return;
+      j[t.dataset.k] = (+t.value || 0);
+    } else if (t.dataset.m !== undefined) {
+      m = t.dataset.m.split(':');
+      state.matrix[+m[0]][+m[1]] = Math.max(0, +t.value || 0);
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (t.dataset.delveh !== undefined) { state.vehicles.splice(+t.dataset.delveh, 1); renderVehicles(); }
+    else if (t.dataset.deljob !== undefined) { state.jobs.splice(+t.dataset.deljob, 1); renderJobs(); }
+  });
+
+  $('btnAddVeh').addEventListener('click', function () {
+    var ids = state.vehicles.map(function (v) { return v.id; });
+    state.vehicles.push({id: ids.length ? Math.max.apply(null, ids) + 1 : 0,
+      start: 0, end: Math.max(0, nLocOf(state) - 1), capacity: 4});
+    renderVehicles();
+  });
+  $('btnAddJob').addEventListener('click', function () {
+    var ids = state.jobs.map(function (j) { return j.id; });
+    state.jobs.push({id: ids.length ? Math.max.apply(null, ids) + 1 : 0, loc: 0, demand: 1});
+    renderJobs();
+  });
+  $('btnResize').addEventListener('click', function () {
+    resizeMatrix(state, +$('nLoc').value || 4);
+    renderAll();
+  });
+  $('btnSample').addEventListener('click', function () { state = defaultState(); renderAll(); });
+
+  function setStatus(txt, cls) {
+    var s = $('status'); s.textContent = txt; s.className = 'pill ' + (cls || '');
+  }
+
+  function health() {
+    setStatus('prüfe …', '');
+    fetch('health').then(function (r) { return r.json().then(function (j) { return {s: r.status, j: j}; }); })
+      .then(function (x) {
+        setStatus('Health ' + x.s + (x.j.status ? ' · ' + x.j.status : ''), x.s === 200 ? 'ok' : 'bad');
+      })
+      .catch(function (err) { setStatus('Fehler: ' + err, 'bad'); });
+  }
+  $('btnHealth').addEventListener('click', health);
+
+  function fmtDur(s) {
+    s = Math.round(s || 0);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return (h ? h + 'h ' : '') + m + 'min';
+  }
+
+  function drawMap(sol, payload) {
+    var svg = $('map'), W = 600, H = 380, n = nLocOf(state), pos = layoutNodes(n, W, H);
+    var h = '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+      '<path d="M 0 1 L 9 5 L 0 9 z" fill="#94a3b8"></path></marker></defs>';
+    var routes = sol.routes || [], i, r, k, a, b, col;
+    var depots = {};
+    (payload.vehicles || []).forEach(function (v) { depots[v.start_index] = 1; depots[v.end_index] = 1; });
+    for (i = 0; i < routes.length; i++) {
+      r = routes[i]; col = PALETTE[i % PALETTE.length];
+      var seq = (r.steps || []).map(function (s) { return s.location_index; })
+        .filter(function (x) { return x !== undefined; });
+      for (k = 0; k + 1 < seq.length; k++) {
+        a = pos[seq[k]]; b = pos[seq[k + 1]];
+        if (!a || !b) continue;
+        h += '<line x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"' +
+          ' stroke="' + col + '" stroke-width="3" opacity="0.85" marker-end="url(#arr)"/>';
+      }
+    }
+    for (i = 0; i < n; i++) {
+      var p = pos[i], isDep = depots[i];
+      h += '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + (isDep ? 13 : 10) + '" fill="#0b1220" stroke="' +
+        (isDep ? '#38bdf8' : '#94a3b8') + '" stroke-width="2"/>' +
+        '<text x="' + p.x + '" y="' + (p.y + 5) + '" text-anchor="middle" font-size="13" font-weight="bold" fill="#e2e8f0">' + i + '</text>';
+    }
+    svg.innerHTML = h;
+    var lg = '';
+    for (i = 0; i < routes.length; i++) {
+      lg += '<span><span class="dot" style="background:' + PALETTE[i % PALETTE.length] + '"></span>Fahrzeug ' + esc(routes[i].vehicle) + '</span>';
+    }
+    lg += '<span><span class="dot" style="background:transparent;border:2px solid #38bdf8"></span>Depot (Start/Ziel)</span>';
+    $('legend').innerHTML = lg;
+  }
+
+  function renderResult(sol, payload) {
+    $('resultCard').hidden = false;
+    var sum = sol.summary || {}, unas = sol.unassigned || [];
+    $('unassigned').innerHTML = unas.length ?
+      '<div class="route" style="border-color:var(--red)"><b>' + unas.length +
+      ' Auftrag/Aufträge nicht zuordenbar:</b> ' + esc(unas.map(function (u) { return u.id; }).join(', ')) + '</div>' : '';
+    $('summary').innerHTML =
+      '<div class="sum"><b>' + esc(sum.cost) + '</b><span>Kosten (s)</span></div>' +
+      '<div class="sum"><b>' + esc((sol.routes || []).length) + '</b><span>Routen</span></div>' +
+      '<div class="sum"><b>' + esc(fmtDur(sum.duration)) + '</b><span>Fahrzeit gesamt</span></div>' +
+      '<div class="sum"><b>' + esc(unas.length) + '</b><span>Unzugeordnet</span></div>' +
+      '<div class="sum"><b>' + esc((sum.computing_times || {}).solving) + ' ms</b><span>Rechenzeit</span></div>';
+    drawMap(sol, payload);
+    var h = '', i, r, col;
+    for (i = 0; i < (sol.routes || []).length; i++) {
+      r = sol.routes[i]; col = PALETTE[i % PALETTE.length];
+      h += '<div class="route" style="border-color:' + col + '"><h3>Fahrzeug ' + esc(r.vehicle) +
+        ' · Kosten ' + esc(r.cost) + ' · Dauer ' + esc(fmtDur(r.duration)) + '</h3><ul class="steps">';
+      (r.steps || []).forEach(function (s, k) {
+        var cls = s.type === 'start' ? 'b-start' : (s.type === 'end' ? 'b-end' : 'b-job');
+        var label = s.type === 'start' ? 'Start' : (s.type === 'end' ? 'Ziel' : 'Auftrag ' + esc(s.id));
+        h += '<li><span class="badge ' + cls + '">' + (k + 1) + '</span><b>' + label + '</b> · Ort ' + esc(s.location_index) +
+          ' · Ankunft ' + esc(fmtDur(s.arrival)) +
+          (s.waiting_time ? ' · Warten ' + esc(fmtDur(s.waiting_time)) : '') +
+          (s.service ? ' · Service ' + esc(fmtDur(s.service)) : '') +
+          (s.load ? ' · Ladung ' + esc(s.load.join('/')) : '') + '</li>';
+      });
+      h += '</ul></div>';
+    }
+    $('routes').innerHTML = h || '<span class="hint">Keine Routen in der Antwort.</span>';
+  }
+
+  $('btnSolve').addEventListener('click', function () {
+    if (!state.vehicles.length) { alert('Bitte mindestens ein Fahrzeug anlegen.'); return; }
+    if (!state.jobs.length) { alert('Bitte mindestens einen Auftrag anlegen.'); return; }
+    var payload = buildPayload(state);
+    var btn = $('btnSolve'); btn.disabled = true; btn.textContent = 'Rechne …';
+    fetch('solve', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)})
+      .then(function (r) { return r.text().then(function (t) { return {s: r.status, t: t}; }); })
+      .then(function (x) {
+        $('rawOut').textContent = 'HTTP ' + x.s + '\n' + x.t;
+        try {
+          var sol = JSON.parse(x.t);
+          if (x.s === 200 && sol.code === 0) { renderResult(sol, payload); }
+          else {
+            $('resultCard').hidden = false;
+            $('routes').innerHTML = '<div class="route" style="border-color:var(--red)"><b>Fehler (HTTP ' + x.s + '):</b><pre>' +
+              esc(x.t).slice(0, 2000) + '</pre></div>';
+          }
+        } catch (err) {
+          $('resultCard').hidden = false;
+          $('routes').innerHTML = '<div class="route" style="border-color:var(--red)"><b>Ungültige Antwort:</b> ' + esc(err) + '</div>';
+        }
+      })
+      .catch(function (err) {
+        $('resultCard').hidden = false;
+        $('rawOut').textContent = 'FEHLERKETTE:\n' + (err && err.stack || err);
+      })
+      .then(function () { btn.disabled = false; btn.textContent = 'Optimieren (POST /solve)'; });
+  });
+
+  renderAll();
+  health();
+}
 </script>
 </body>
 </html>
