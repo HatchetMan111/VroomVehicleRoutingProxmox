@@ -125,7 +125,23 @@ wait_for_net() { # wartet bis der CT wirklich ins Netz kommt (DNS + HTTPS)
     fi
     sleep "$pause"
   done
-  die "Container $ctid kommt nicht ins Netz (wget --spider $SETUP_URL schlug ${tries}x fehl). Pruefen: 'pct exec $ctid -- getent hosts raw.githubusercontent.com' (DHCP/DNS?), Firewall/Proxy, oder URL im Browser oeffnen."
+  # Kein Netz nach ~4,5 Min: Diagnose direkt einsammeln (alle Befehle mit
+  # || true, damit die Diagnose selbst nie den Trap ausloest).
+  printf '%s\n' "----- Netzwerk-Diagnose aus CT $ctid -----" >&2
+  printf '%s\n' "$ pct exec $ctid -- ip -4 addr show eth0" >&2
+  pct exec "$ctid" -- ip -4 addr show eth0 2>&1 | tail -n 10 >&2 || true
+  printf '%s\n' "$ pct exec $ctid -- ip route" >&2
+  pct exec "$ctid" -- ip route 2>&1 | tail -n 10 >&2 || true
+  printf '%s\n' "$ pct exec $ctid -- cat /etc/resolv.conf" >&2
+  pct exec "$ctid" -- cat /etc/resolv.conf 2>&1 | tail -n 10 >&2 || true
+  printf '%s\n' "$ pct exec $ctid -- getent hosts raw.githubusercontent.com" >&2
+  pct exec "$ctid" -- getent hosts raw.githubusercontent.com 2>&1 | tail -n 5 >&2 || true
+  printf '%s\n' "$ pct exec $ctid -- ping -c1 -W3 8.8.8.8  (L3 ohne DNS)" >&2
+  pct exec "$ctid" -- ping -c1 -W3 8.8.8.8 2>&1 | tail -n 5 >&2 || true
+  printf '%s\n' "$ pct config $ctid | grep -i net" >&2
+  pct config "$ctid" 2>/dev/null | grep -i net >&2 || true
+  printf '%s\n' "------------------------------------------" >&2
+  die "Container $ctid kommt nicht ins Netz (wget --spider $SETUP_URL schlug ${tries}x fehl). Deutung: kein ping -> Route/Firewall/DHCP (pct config pruefen); ping OK aber getent leer -> DNS (resolv.conf). Oder reconnect: Einzeiler erneut laufen lassen."
 }
 
 ct_curl() { # $1=ctid $2=url — curl im CT mit Retry + letzte Ausgabe bei Misserfolg
